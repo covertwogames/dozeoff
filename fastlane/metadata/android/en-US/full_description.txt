@@ -1,0 +1,34 @@
+Are your notifications arriving late — or not at all? You're not alone!
+
+Android uses a system called Doze to save battery by putting apps to sleep. Unfortunately, Doze is often far too aggressive. Important notifications from messaging apps, email, smart home devices, security cameras, and more can be delayed by minutes or even hours.
+
+DozeOff fixes this by sending periodic background pulses that keep your device alert and your notifications flowing on time — with minimal battery impact (typically 1-2% per day).
+
+TWO LEVELS OF PROTECTION
+=========================
+
+Standard Mode sends regular background pulses that work within Android's normal battery rules. Most notification delays are significantly reduced with no visible indicators or side effects.
+
+Max Mode uses a more powerful method that Android cannot delay or skip. Every pulse fires exactly on schedule, flushing all pending notifications, messages, and syncs. Significantly more effective than standard mode for users who need reliable, real-time alerts.
+
+SMART FEATURES
+===============
+
+Automatically respects Do Not Disturb and Bedtime Mode — Max protection steps down to standard while DND is active and resumes when it ends
+
+Works on all Android devices including phones, tablets, and WiFi-only devices
+Built-in guidance for Samsung, Xiaomi, Huawei, OnePlus, Oppo, Vivo, ASUS, Nokia, and other manufacturers with aggressive battery management
+
+Simple one-time setup with step-by-step permission walkthrough
+Set it and forget it — survives reboots, runs silently in the background
+
+PERFECT FOR
+============
+
+Messaging apps (WhatsApp, Telegram, Signal, Slack)
+Smart home and security camera alerts (Ring, Nest, Arlo)
+Email and calendar reminders
+Health and fitness tracking notifications
+Any app where timely alerts matter
+
+No ads. No data collection. No subscription. Just notifications, on time. Every time. 
