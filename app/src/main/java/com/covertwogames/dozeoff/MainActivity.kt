@@ -343,8 +343,7 @@ class MainActivity : AppCompatActivity() {
                 minutesAgo < 60 -> "$minutesAgo minutes ago"
                 else -> "${minutesAgo / 60} hours ago"
             }
-            val totalPulses = prefsManager.totalPulses
-            binding.lastPulseText.text = "Last pulse: $pulseTimeText · Total: $totalPulses"
+            binding.lastPulseText.text = "Last pulse: $pulseTimeText"
         } else {
             binding.lastPulseText.text = if (level != PrefsManager.LEVEL_OFF) "Starting up..." else "Disabled"
         }
