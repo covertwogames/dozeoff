@@ -53,12 +53,17 @@ class DozeOffService : Service() {
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
 
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "DozeOff::ServiceWakeLock"
-        ).apply {
-            acquire()
+        // Only acquire if we are not already holding one. onStartCommand can be
+        // called repeatedly (toggle, boot, START_STICKY restart) and overwriting
+        // a held wakelock would leak it permanently.
+        if (wakeLock?.isHeld != true) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "DozeOff::ServiceWakeLock"
+            ).apply {
+                acquire()
+            }
         }
 
         // Reset pulse counter on each fresh start (toggle on or reboot)
@@ -75,18 +80,23 @@ class DozeOffService : Service() {
 
         // Listen for DND state changes to proactively cancel alarm clocks
         // before they fire during DND (which would cause Android to disable DND)
-        dndReceiver = DndChangeReceiver()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(
-                dndReceiver,
-                IntentFilter(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED),
-                Context.RECEIVER_NOT_EXPORTED
-            )
-        } else {
-            registerReceiver(
-                dndReceiver,
-                IntentFilter(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
-            )
+        // Only register once. A repeat onStartCommand would otherwise stack up
+        // receivers that all fire on the same broadcast, each triggering its own
+        // cancel-and-reschedule of the alarm chain.
+        if (dndReceiver == null) {
+            dndReceiver = DndChangeReceiver()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(
+                    dndReceiver,
+                    IntentFilter(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED),
+                    Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                registerReceiver(
+                    dndReceiver,
+                    IntentFilter(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
+                )
+            }
         }
 
         Log.d(TAG, "Service fully started, heartbeat chain active")
