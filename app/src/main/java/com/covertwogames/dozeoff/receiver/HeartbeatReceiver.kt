@@ -29,8 +29,16 @@ class HeartbeatReceiver : BroadcastReceiver() {
         fun isDndActive(context: Context): Boolean {
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE)
                     as NotificationManager
-            return notificationManager.currentInterruptionFilter !=
-                    NotificationManager.INTERRUPTION_FILTER_ALL
+            // Check explicitly for the three "DND is on" states rather than
+            // "anything that isn't ALL". INTERRUPTION_FILTER_UNKNOWN is 0, which
+            // would otherwise read as DND being active and pin the app to
+            // standard scheduling forever.
+            return when (notificationManager.currentInterruptionFilter) {
+                NotificationManager.INTERRUPTION_FILTER_PRIORITY,
+                NotificationManager.INTERRUPTION_FILTER_NONE,
+                NotificationManager.INTERRUPTION_FILTER_ALARMS -> true
+                else -> false
+            }
         }
 
         fun scheduleNextPulse(context: Context) {

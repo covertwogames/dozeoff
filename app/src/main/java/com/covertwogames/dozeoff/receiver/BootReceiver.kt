@@ -17,11 +17,12 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action
         if (action != Intent.ACTION_BOOT_COMPLETED &&
-            action != Intent.ACTION_LOCKED_BOOT_COMPLETED) {
+            action != Intent.ACTION_LOCKED_BOOT_COMPLETED &&
+            action != Intent.ACTION_MY_PACKAGE_REPLACED) {
             return
         }
 
-        Log.d(TAG, "Boot completed, checking if DozeOff should restart")
+        Log.d(TAG, "Received $action, checking if DozeOff should restart")
 
         val prefsManager = PrefsManager(context)
         if (prefsManager.protectionLevel == PrefsManager.LEVEL_OFF) {
@@ -29,12 +30,19 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        Log.d(TAG, "Starting DozeOff service after boot")
+        Log.d(TAG, "Starting DozeOff service")
         val serviceIntent = Intent(context, DozeOffService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent)
-        } else {
-            context.startService(serviceIntent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+        } catch (e: Exception) {
+            // If the system refuses the background start for any reason,
+            // fail quietly rather than crashing. The user will see the
+            // "Background service: Stopped" warning on the dashboard.
+            Log.e(TAG, "Could not start service: ${e.message}")
         }
     }
 }
