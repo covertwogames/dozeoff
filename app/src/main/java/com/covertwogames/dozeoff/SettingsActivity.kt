@@ -46,18 +46,6 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
-        // Set current DND respect state
-        binding.switchRespectDnd.isChecked = prefsManager.respectDnd
-
-        binding.switchRespectDnd.setOnCheckedChangeListener { _, isChecked ->
-            prefsManager.respectDnd = isChecked
-
-            // If Max mode is active, reschedule to apply the change immediately
-            if (prefsManager.protectionLevel == PrefsManager.LEVEL_MAX && prefsManager.isEnabled) {
-                HeartbeatReceiver.cancelPulses(this)
-                HeartbeatReceiver.scheduleNextPulse(this)
-            }
-        }
 
         // Network diagnostic (temporary, remove when done measuring)
         binding.textNetLog.text = prefsManager.getNetLog()
