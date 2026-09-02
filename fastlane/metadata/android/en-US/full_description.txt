@@ -1,34 +1,39 @@
-Are your notifications arriving late — or not at all? You're not alone!
+Are your notifications arriving late, or not at all? You're not alone.
 
-Android uses a system called Doze to save battery by putting apps to sleep. Unfortunately, Doze is often far too aggressive. Important notifications from messaging apps, email, smart home devices, security cameras, and more can be delayed by minutes or even hours.
+Android uses a system called Doze to save battery by putting your phone to sleep when you're not using it. The problem is that Doze also holds back notifications. Messages, emails, smart home and security camera alerts, and delivery updates can all sit waiting until you next pick up your phone.
 
-DozeOff fixes this by sending periodic background pulses that keep your device alert and your notifications flowing on time — with minimal battery impact (typically 1-2% per day).
+DozeOff fixes that, and it gives you two ways to do it.
 
-TWO LEVELS OF PROTECTION
-=========================
+MAX MODE
 
-Standard Mode sends regular background pulses that work within Android's normal battery rules. Most notification delays are significantly reduced with no visible indicators or side effects.
+Max stops your device entering Doze sleep in the first place. It does the best job of getting notifications from all your apps through on time.
 
-Max Mode uses a more powerful method that Android cannot delay or skip. Every pulse fires exactly on schedule, flushing all pending notifications, messages, and syncs. Significantly more effective than standard mode for users who need reliable, real-time alerts.
+The trade-off is that some devices will show a small alarm icon in the status bar, and may show a time on your lock screen. You will never hear an alarm. Whether the icon appears depends entirely on your phone, and many devices never show it at all. It isn't something DozeOff can turn off.
 
-SMART FEATURES
-===============
+BALANCED MODE
 
-Automatically respects Do Not Disturb and Bedtime Mode — Max protection steps down to standard while DND is active and resumes when it ends
+Balanced lets your device sleep normally, then briefly wakes it at an interval you choose. Each wake pulls your phone out of Doze for long enough for pending notifications from every app to come through.
 
-Works on all Android devices including phones, tablets, and WiFi-only devices
-Built-in guidance for Samsung, Xiaomi, Huawei, OnePlus, Oppo, Vivo, ASUS, Nokia, and other manufacturers with aggressive battery management
+Nothing appears in your status bar or on your lock screen. The trade-off is timing: a notification arriving just after a wake waits for the next one.
 
-Simple one-time setup with step-by-step permission walkthrough
-Set it and forget it — survives reboots, runs silently in the background
+Max is the default. Switch to Balanced any time from the home screen.
 
-PERFECT FOR
-============
+ALSO INCLUDED
 
-Messaging apps (WhatsApp, Telegram, Signal, Slack)
-Smart home and security camera alerts (Ring, Nest, Arlo)
-Email and calendar reminders
-Health and fitness tracking notifications
-Any app where timely alerts matter
+* Pauses automatically during Do Not Disturb and Bedtime Mode, so it never interferes with your sleep settings
+* Setup guidance for Samsung, Xiaomi, Huawei, OnePlus, Oppo, Vivo, ASUS, Nokia and other manufacturers with aggressive battery management
+* Adjustable wake interval in Balanced mode
+* Simple one-time setup, then it runs quietly in the background
+* Survives reboots and app updates
 
-No ads. No data collection. No subscription. Just notifications, on time. Every time. 
+GOOD FOR
+
+* Messaging apps
+* Smart home and security camera alerts
+* Email and calendar reminders
+* Delivery and rideshare tracking
+* Anything where a late notification is a problem
+
+PRIVACY
+
+This build requests no network permissions at all. DozeOff cannot make a network connection, because it has no reason to. No ads, no tracking, no analytics, no account.
