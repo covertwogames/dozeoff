@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
+import android.os.PowerManager
+import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
@@ -39,6 +41,7 @@ class DozeOffService : Service() {
 
     private var notificationUpdateTimer: Timer? = null
     private var dndReceiver: DndChangeReceiver? = null
+    private var idleReceiver: BroadcastReceiver? = null
     private var lastWatchdogRearmAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -93,6 +96,53 @@ class DozeOffService : Service() {
             }
         }
 
+        // Recovery on natural Doze exits. Some OEM schedulers bury our wake-up
+        // for far longer than requested (over 80 minutes observed on one
+        // device). When the device leaves Doze under its own steam and our
+        // wake-up is overdue, re-arm the chain right then rather than waiting
+        // for the buried alarm. Reuses the watchdog cooldown so this cannot
+        // re-arm on every exit and starve the chain it is protecting.
+        if (idleReceiver == null) {
+            idleReceiver = object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context, intent: Intent?) {
+                    if (intent?.action != PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED) return
+                    val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+                    val idle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        pm.isDeviceIdleMode
+                    } else false
+                    if (idle) return
+
+                    val prefs = PrefsManager(ctx)
+                    if (prefs.protectionLevel == PrefsManager.LEVEL_OFF) return
+
+                    val now = System.currentTimeMillis()
+                    val intervalMs = prefs.pulseIntervalMinutes * 60 * 1000L
+                    val graceMs = WATCHDOG_MAX_GRACE_MINUTES * 60 * 1000L
+                    val lastPulse = prefs.lastPulseTime
+                    val overdue = lastPulse > 0L && now - lastPulse > intervalMs + graceMs
+                    val coolingDown = lastWatchdogRearmAt != 0L &&
+                            now - lastWatchdogRearmAt < intervalMs
+                    if (overdue && !coolingDown) {
+                        lastWatchdogRearmAt = now
+                        Log.w(TAG, "Wake-up overdue on natural Doze exit, re-arming")
+                        HeartbeatReceiver.scheduleNextPulse(ctx)
+                    }
+                }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(
+                    idleReceiver,
+                    IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED),
+                    Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                registerReceiver(
+                    idleReceiver,
+                    IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
+                )
+            }
+        }
+
         Log.d(TAG, "Service fully started, heartbeat chain active")
 
         return START_STICKY
@@ -108,6 +158,11 @@ class DozeOffService : Service() {
             try { unregisterReceiver(it) } catch (e: Exception) { /* already unregistered */ }
         }
         dndReceiver = null
+
+        idleReceiver?.let {
+            try { unregisterReceiver(it) } catch (e: Exception) { /* already unregistered */ }
+        }
+        idleReceiver = null
 
         notificationUpdateTimer?.cancel()
         notificationUpdateTimer = null
@@ -162,11 +217,11 @@ class DozeOffService : Service() {
         if (lastWatchdogRearmAt != 0L && now - lastWatchdogRearmAt < intervalMs) return
 
         // Threshold follows the scheduling actually in use, not the selected
-        // mode. Max alarms land within seconds of schedule, so anything
-        // meaningfully late is genuinely broken. Standard alarms are rate
-        // limited and delivered in maintenance windows, so their timing
-        // legitimately wanders and the threshold has to be much lazier.
-        val thresholdMs = if (HeartbeatReceiver.isUsingMaxScheduling(this)) {
+        // mode. Both Max and Balanced now run on precise alarms (a standing
+        // alarm clock and an exact wake-up respectively), so anything
+        // meaningfully late is genuinely broken. Only the DND-paused path can
+        // legitimately wander, so it keeps the lazier threshold.
+        val thresholdMs = if (!HeartbeatReceiver.isPausedForDnd(this)) {
             intervalMs + WATCHDOG_MAX_GRACE_MINUTES * 60 * 1000L
         } else {
             val standardMinutes = maxOf(
@@ -214,10 +269,9 @@ class DozeOffService : Service() {
         val level = prefsManager.protectionLevel
 
         val titleText = when {
-            level == PrefsManager.LEVEL_MAX && prefsManager.respectDnd &&
-                    HeartbeatReceiver.isDndActive(this) -> "DozeOff: Minimum Protection"
+            HeartbeatReceiver.isPausedForDnd(this) -> "DozeOff: Paused for Do Not Disturb"
             level == PrefsManager.LEVEL_MAX -> "DozeOff: Max Protection"
-            else -> "DozeOff: Minimum Protection"
+            else -> "DozeOff: Balanced Protection"
         }
 
         val statusText = if (lastPulse > 0) {
