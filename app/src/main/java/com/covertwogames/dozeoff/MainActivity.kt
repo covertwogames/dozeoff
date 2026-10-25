@@ -20,6 +20,12 @@ import com.covertwogames.dozeoff.util.*
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        // How late a pulse can be and still count as proof the alarm chain is
+        // running. Matches the service watchdog's grace period.
+        private const val PULSE_FRESH_GRACE_MINUTES = 5
+    }
+
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefsManager: PrefsManager
     private var isUpdatingToggle = false
@@ -94,14 +100,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Returning from the alarms-blocked Fix. If the permission is now
-        // there, re-arm the chain straight away rather than waiting for the
+        // there, restore protection straight away rather than waiting for the
         // watchdog, whose cooldown could otherwise add up to an interval.
+        // Turning the permission off stops the whole app, so the service may
+        // be gone too: restart it if so, otherwise just re-arm the chain.
         if (waitingForAlarmFix) {
             waitingForAlarmFix = false
             if (prefsManager.protectionLevel != PrefsManager.LEVEL_OFF &&
                 canScheduleExactAlarms()
             ) {
-                HeartbeatReceiver.scheduleNextPulse(this)
+                if (HealthChecker.isServiceRunning(this)) {
+                    HeartbeatReceiver.scheduleNextPulse(this)
+                } else {
+                    startDozeOffService()
+                }
             }
         }
 
@@ -185,6 +197,10 @@ class MainActivity : AppCompatActivity() {
 
         when (level) {
             PrefsManager.LEVEL_OFF -> {
+                // Cancel here as well as in the service's cleanup. If the
+                // service has already died, stopping it runs no cleanup, and
+                // the alarms would otherwise go on firing.
+                HeartbeatReceiver.cancelPulses(this)
                 stopDozeOffService()
             }
             PrefsManager.LEVEL_BALANCED, PrefsManager.LEVEL_MAX -> {
@@ -321,12 +337,24 @@ class MainActivity : AppCompatActivity() {
         // whatever else the dashboard would otherwise say.
         alarmsBlocked = level != PrefsManager.LEVEL_OFF && !canScheduleExactAlarms()
 
+        // The alarm chain lives in Android, not in the service, so it can go
+        // on protecting after the service has died. A recent pulse proves it
+        // is still running. This can only ever upgrade the status, never
+        // downgrade it: a pulse can arrive late on phones that delay alarms
+        // while protection is still in place.
+        val lastPulse = prefsManager.lastPulseTime
+        val sinceLastPulse = System.currentTimeMillis() - lastPulse
+        val pulseFreshWindowMs =
+            (prefsManager.pulseIntervalMinutes + PULSE_FRESH_GRACE_MINUTES) * 60 * 1000L
+        val pulseFresh = lastPulse > 0 && sinceLastPulse in 0..pulseFreshWindowMs
+        val protecting = health.serviceRunning || pulseFresh
+
         if (alarmsBlocked) {
             binding.statusIcon.setColorFilter(getColor(R.color.warning))
             binding.statusText.text = "Protection Not Working"
             binding.statusText.setTextColor(getColor(R.color.warning))
             binding.btnDndInfo.visibility = View.VISIBLE
-        } else if (level != PrefsManager.LEVEL_OFF && health.serviceRunning) {
+        } else if (level != PrefsManager.LEVEL_OFF && protecting) {
             if (HeartbeatReceiver.isPausedForDnd(this)) {
                 binding.statusIcon.setColorFilter(getColor(R.color.success))
                 binding.statusText.text = "Protection Paused"
@@ -349,7 +377,6 @@ class MainActivity : AppCompatActivity() {
             binding.btnDndInfo.visibility = View.GONE
         }
 
-        val lastPulse = prefsManager.lastPulseTime
         if (lastPulse > 0) {
             val elapsed = System.currentTimeMillis() - lastPulse
             val minutesAgo = elapsed / 60000

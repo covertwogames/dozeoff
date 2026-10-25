@@ -18,10 +18,10 @@ android {
     defaultConfig {
         applicationId "com.covertwogames.dozeoff"
         applicationIdSuffix ".foss"
-        minSdk 23
+        minSdk 24
         targetSdk 36
-        versionCode 12
-        versionName "2.0.3"
+        versionCode 14
+        versionName "2.0.4"
     }
 
     signingConfigs {

@@ -8,6 +8,14 @@ import android.util.Log
 import com.covertwogames.dozeoff.service.DozeOffService
 import com.covertwogames.dozeoff.util.PrefsManager
 
+/**
+ * Restarts protection after a reboot or an app update.
+ *
+ * Only the normal boot broadcast is handled, which Android sends after the
+ * user first unlocks the phone. DozeOff's settings live in storage that stays
+ * locked until then, so it cannot run before the first unlock, and the apps it
+ * protects mostly can't either.
+ */
 class BootReceiver : BroadcastReceiver() {
 
     companion object {
@@ -17,7 +25,6 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action
         if (action != Intent.ACTION_BOOT_COMPLETED &&
-            action != Intent.ACTION_LOCKED_BOOT_COMPLETED &&
             action != Intent.ACTION_MY_PACKAGE_REPLACED) {
             return
         }

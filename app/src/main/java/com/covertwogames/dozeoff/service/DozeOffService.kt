@@ -42,6 +42,10 @@ class DozeOffService : Service() {
     private var notificationUpdateTimer: Timer? = null
     private var dndReceiver: DndChangeReceiver? = null
     private var idleReceiver: BroadcastReceiver? = null
+    private var powerReceiver: BroadcastReceiver? = null
+
+    // Read on the watchdog's timer thread, written on the main thread.
+    @Volatile
     private var lastWatchdogRearmAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -68,6 +72,37 @@ class DozeOffService : Service() {
 
         // Fire the first pulse immediately so the UI updates right away
         performImmediatePulse()
+
+        // Charger plugged in or pulled out. Max steps back while plugged in,
+        // because Doze can't run on a charger, and its standing clock has to
+        // be back in place the moment the phone is unplugged. Android only
+        // delivers these to receivers registered at runtime, so it lives here,
+        // and it is registered before the chain is scheduled so the very first
+        // schedule already knows it is there. Balanced ignores these.
+        if (powerReceiver == null) {
+            powerReceiver = object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context, intent: Intent?) {
+                    val pluggedIn = when (intent?.action) {
+                        Intent.ACTION_POWER_CONNECTED -> true
+                        Intent.ACTION_POWER_DISCONNECTED -> false
+                        else -> return
+                    }
+                    if (PrefsManager(ctx).protectionLevel != PrefsManager.LEVEL_MAX) return
+                    Log.d(TAG, "Charger ${if (pluggedIn) "connected" else "disconnected"}, rescheduling Max")
+                    HeartbeatReceiver.scheduleNextPulse(ctx, pluggedInOverride = pluggedIn)
+                }
+            }
+            val powerFilter = IntentFilter().apply {
+                addAction(Intent.ACTION_POWER_CONNECTED)
+                addAction(Intent.ACTION_POWER_DISCONNECTED)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(powerReceiver, powerFilter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(powerReceiver, powerFilter)
+            }
+            HeartbeatReceiver.chargerWatcherActive = true
+        }
 
         // Schedule the next alarm in the chain
         HeartbeatReceiver.scheduleNextPulse(this)
@@ -115,6 +150,11 @@ class DozeOffService : Service() {
                     val prefs = PrefsManager(ctx)
                     if (prefs.protectionLevel == PrefsManager.LEVEL_OFF) return
 
+                    // This exit is Balanced's own brief clock at work, not a
+                    // natural one. Re-arming now would cancel that clock before
+                    // it fires and the pulse would never be counted.
+                    if (HeartbeatReceiver.shortLeadRecentlyPlaced()) return
+
                     val now = System.currentTimeMillis()
                     val intervalMs = prefs.pulseIntervalMinutes * 60 * 1000L
                     val graceMs = WATCHDOG_MAX_GRACE_MINUTES * 60 * 1000L
@@ -151,6 +191,10 @@ class DozeOffService : Service() {
     override fun onDestroy() {
         Log.d(TAG, "Service destroyed")
 
+        // The charger watcher is going away, so Max must no longer step back
+        // on a charger. Cleared first, before anything below can reschedule.
+        HeartbeatReceiver.chargerWatcherActive = false
+
         HeartbeatReceiver.cancelPulses(this)
 
         // Unregister DND listener
@@ -163,6 +207,11 @@ class DozeOffService : Service() {
             try { unregisterReceiver(it) } catch (e: Exception) { /* already unregistered */ }
         }
         idleReceiver = null
+
+        powerReceiver?.let {
+            try { unregisterReceiver(it) } catch (e: Exception) { /* already unregistered */ }
+        }
+        powerReceiver = null
 
         notificationUpdateTimer?.cancel()
         notificationUpdateTimer = null
@@ -204,6 +253,10 @@ class DozeOffService : Service() {
         // Nothing to protect if the user has protection switched off.
         if (prefsManager.protectionLevel == PrefsManager.LEVEL_OFF) return
 
+        // Balanced's brief clock is pending and about to fire and count the
+        // pulse. Re-arming now would cancel it.
+        if (HeartbeatReceiver.shortLeadRecentlyPlaced()) return
+
         // No pulse recorded yet. Service startup fires one immediately, so this
         // only guards the moment before that has happened.
         val lastPulse = prefsManager.lastPulseTime
@@ -236,10 +289,19 @@ class DozeOffService : Service() {
 
         // Chain looks dead. Re-arm on the main thread so we do not race the
         // heartbeat receiver doing its own cancel-and-reschedule.
-        lastWatchdogRearmAt = now
         Log.w(TAG, "Heartbeat chain overdue by ${overdueBy / 60000}m, re-arming")
         Handler(Looper.getMainLooper()).post {
             try {
+                // Check again on the main thread, where the heartbeat receiver
+                // runs. Between the check above and now, Balanced may have
+                // placed its brief clock or a pulse may have landed, and
+                // re-arming would cancel that clock. A skipped re-arm leaves
+                // the cooldown untouched, so the next check, a minute later,
+                // can still act if that clock never fires.
+                if (HeartbeatReceiver.shortLeadRecentlyPlaced()) return@post
+                val latestPulse = PrefsManager(this).lastPulseTime
+                if (System.currentTimeMillis() - latestPulse < thresholdMs) return@post
+                lastWatchdogRearmAt = System.currentTimeMillis()
                 HeartbeatReceiver.scheduleNextPulse(this)
             } catch (e: Exception) {
                 Log.e(TAG, "Watchdog re-arm failed: ${e.message}")

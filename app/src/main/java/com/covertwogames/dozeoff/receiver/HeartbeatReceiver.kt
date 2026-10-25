@@ -6,6 +6,8 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
@@ -23,8 +25,9 @@ class HeartbeatReceiver : BroadcastReceiver() {
         // request code, because PendingIntent matching takes the action into
         // account and they must be cancellable independently.
         //
-        //  ACTION_HEARTBEAT       periodic wake-up. Used by Balanced mode and
-        //                         while paused for Do Not Disturb.
+        //  ACTION_HEARTBEAT       periodic wake-up. Used by Balanced mode, while
+        //                         paused for Do Not Disturb, and by Max while
+        //                         the phone is plugged in.
         //  ACTION_SHORT_LEAD      Balanced mode's brief alarm clock, placed a
         //                         few seconds out to pull the device out of Doze.
         //  ACTION_STANDING_CLOCK  Max mode's standing alarm clock, always one
@@ -44,6 +47,29 @@ class HeartbeatReceiver : BroadcastReceiver() {
         // the system to act on it, short enough that it is almost never the
         // device's "next alarm" on the lock screen.
         private const val SHORT_LEAD_MS = 3000L
+
+        // Android reports the Doze exit caused by the brief clock within a few
+        // seconds of it being placed, before the clock itself fires. For this
+        // long after placing one, the service's recovery checks leave the chain
+        // alone, so they cannot cancel the clock before it has been counted.
+        private const val SHORT_LEAD_GUARD_MS = 30_000L
+
+        // When Balanced last placed its brief clock, on the elapsed-realtime
+        // clock, or 0 once that clock has fired or been cancelled (both go
+        // through cancelPulses). Held in memory only: the service that reads it
+        // always runs in this same process, and a value from before a reboot
+        // must never count.
+        @Volatile
+        private var lastShortLeadPlacedAt = 0L
+
+        // True only while the service's charger watcher is registered. Max may
+        // step back on a charger only when something is guaranteed to put the
+        // standing clock back the moment the phone is unplugged; without the
+        // watcher, the clock could be missing for up to an interval after
+        // unplugging, long enough for deep Doze to start. In memory only, so
+        // it resets by itself if the process dies.
+        @Volatile
+        var chargerWatcherActive = false
 
         fun isDndActive(context: Context): Boolean {
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE)
@@ -73,7 +99,69 @@ class HeartbeatReceiver : BroadcastReceiver() {
             PrefsManager(context).protectionLevel == PrefsManager.LEVEL_BALANCED &&
                     !isPausedForDnd(context)
 
-        fun scheduleNextPulse(context: Context) {
+        /**
+         * Whether the phone is on any charger, wired, wireless or dock. This is
+         * the same test Android's Doze uses (battery present and plugged), and
+         * Doze never runs while it is true. Reads the battery status Android
+         * keeps on hand, which needs no receiver and is allowed from any
+         * context. If the status can't be read, reports unplugged, which keeps
+         * Max doing exactly what it did before this check existed.
+         */
+        fun isPluggedIn(context: Context): Boolean {
+            return try {
+                val status = context.applicationContext.registerReceiver(
+                    null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+                ) ?: return false
+                val plugged = status.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
+                val present = status.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true)
+                present && plugged != 0
+            } catch (e: Exception) {
+                Log.e(TAG, "Battery status unreadable, assuming unplugged: ${e.message}")
+                false
+            }
+        }
+
+        /**
+         * True while Balanced's brief clock is pending: placed within the last
+         * 30 seconds and not yet fired or cancelled. The service checks this
+         * before re-arming the chain, because re-arming cancels that clock
+         * before it fires.
+         */
+        fun shortLeadRecentlyPlaced(): Boolean {
+            val placedAt = lastShortLeadPlacedAt
+            if (placedAt == 0L) return false
+            val since = SystemClock.elapsedRealtime() - placedAt
+            return since in 0 until SHORT_LEAD_GUARD_MS
+        }
+
+        /**
+         * Whether Max should have its standing clock in place right now.
+         *
+         * Max steps back while the phone is plugged in. Doze can't run on a
+         * charger, so the standing clock would do nothing there except show as
+         * the phone's next alarm and wake other apps that watch for alarm
+         * changes. It only steps back while the service's charger watcher is
+         * running, because that watcher is what puts the clock back the moment
+         * the phone is unplugged.
+         *
+         * [pluggedInOverride] is for callers that have just been told the
+         * charger state by Android itself (the power connected and disconnected
+         * broadcasts), so the decision doesn't depend on how quickly Android
+         * updates the battery status that would otherwise be read.
+         */
+        private fun wantsStandingClock(context: Context, pluggedInOverride: Boolean?): Boolean {
+            if (!isUsingMaxScheduling(context)) return false
+            if (!chargerWatcherActive) return true
+            val pluggedIn = pluggedInOverride ?: isPluggedIn(context)
+            return !pluggedIn
+        }
+
+        /** Whether the next pulse scheduled now would be Max's standing clock. */
+        fun usesStandingClockNow(context: Context): Boolean =
+            wantsStandingClock(context, null)
+
+        /** Schedules the next alarm for the selected mode. */
+        fun scheduleNextPulse(context: Context, pluggedInOverride: Boolean? = null) {
             val prefsManager = PrefsManager(context)
             if (prefsManager.protectionLevel == PrefsManager.LEVEL_OFF) return
 
@@ -82,12 +170,12 @@ class HeartbeatReceiver : BroadcastReceiver() {
 
             cancelPulses(context)
 
-            if (isUsingMaxScheduling(context)) {
+            if (wantsStandingClock(context, pluggedInOverride)) {
                 placeStandingAlarmClock(context, alarmManager, intervalMs, prefsManager)
             } else {
-                // Balanced, or paused for DND. Either way the next thing to
-                // happen is a plain wake-up; what it does is decided when it
-                // fires, in onReceive.
+                // Balanced, paused for DND, or Max on a charger. Either way the
+                // next thing to happen is a plain wake-up; what it does is
+                // decided when it fires, in onReceive.
                 scheduleWakeUp(context, alarmManager, intervalMs, prefsManager)
             }
         }
@@ -142,11 +230,19 @@ class HeartbeatReceiver : BroadcastReceiver() {
                     ),
                     pendingIntent
                 )
+                lastShortLeadPlacedAt = SystemClock.elapsedRealtime()
                 prefsManager.isMaxVerified = true
                 Log.d(TAG, "BALANCED: short-lead clock placed")
-            } catch (e: SecurityException) {
-                Log.e(TAG, "BALANCED: setAlarmClock refused: ${e.message}")
+            } catch (e: Exception) {
+                // The brief clock was refused. This call is the only thing the
+                // wake-up that triggered it was going to schedule, so without
+                // a fallback the chain would end here. Schedule the next plain
+                // wake-up instead, and leave the pulse uncounted: this cycle
+                // did not pull the device out of Doze.
+                Log.e(TAG, "BALANCED: setAlarmClock refused, falling back: ${e.message}")
                 prefsManager.isMaxVerified = false
+                val intervalMs = prefsManager.pulseIntervalMinutes * 60 * 1000L
+                scheduleWakeUp(context, alarmManager, intervalMs, prefsManager)
             }
         }
 
@@ -204,6 +300,9 @@ class HeartbeatReceiver : BroadcastReceiver() {
                 val i = Intent(context, HeartbeatReceiver::class.java).apply { action = act }
                 alarmManager.cancel(PendingIntent.getBroadcast(context, code, i, flags))
             }
+            // Any brief clock is gone now, whether it fired (its handler
+            // reschedules through here) or was cancelled.
+            lastShortLeadPlacedAt = 0L
             Log.d(TAG, "All pulses cancelled")
         }
     }
